@@ -12,29 +12,32 @@ app.MapGet("/", () => Results.Content(Stranica(""), "text/html"));
 
 app.MapPost("/", (HttpRequest req) =>
 {
-    string ime = req.Form["ime"].ToString();
+    string ime = req.Form["ime"].ToString();              // 1. izvor: unos s forme
 
-    // Poslovno pravilo ostaje, ali više nije jedina zaštita
+    // "Zaštita" 1: ne dozvoli pretragu admina
     if (ime.Contains("admin", StringComparison.OrdinalIgnoreCase)) return Results.Content(Stranica(""), "text/html");
-    // Parametrizovan upit: unos se nikad ne lijepi u SQL tekst
-    const string upit = "SELECT Ime, Email, Uloga FROM Korisnici WHERE Ime = $ime AND Uloga <> 'administrator'";
+
+    string upit = NapraviUpit(ime);                        // 2. prolazi kroz metodu
 
     string rezultat;
-    try { rezultat = Tabela(Izvrsi(baza, upit, ime)); }
+    try { rezultat = Tabela(Izvrsi(baza, upit)); }         // 3. ...i kroz drugu
     catch (SqliteException e) { rezultat = $"<p><b>Greška baze:</b> {WebUtility.HtmlEncode(e.Message)}</p>"; }
 
-    string odgovor = $"<p>Pozdrav, {WebUtility.HtmlEncode(ime)}!</p>" +   // kodiranje prije ispisa
+    string odgovor = $"<p>Pozdrav, {ime}!</p>" +           // 5. ponor: XSS (nekodiran unos u HTML)
                      $"<p>Upit: <code>{WebUtility.HtmlEncode(upit)}</code></p>" + rezultat;
     return Results.Content(Stranica(odgovor), "text/html");
 });
 
 app.Run();
 
-static List<string[]> Izvrsi(SqliteConnection baza, string sql, string ime)
+// "Zaštita" 2: upit nikad ne vraća administratore
+static string NapraviUpit(string ime) =>
+    "SELECT Ime, Email, Uloga FROM Korisnici WHERE Ime = '" + ime + "' AND Uloga <> 'administrator'";
+
+static List<string[]> Izvrsi(SqliteConnection baza, string sql)
 {
     using var cmd = baza.CreateCommand();
-    cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("$ime", ime);              // vrijednost ide odvojeno od upita
+    cmd.CommandText = sql;                                 // 4. ponor: SQL injection
     using var r = cmd.ExecuteReader();
     var redovi = new List<string[]>();
     while (r.Read()) redovi.Add([r.GetString(0), r.GetString(1), r.GetString(2)]);
@@ -47,13 +50,12 @@ static void Pripremi(SqliteConnection baza)
     cmd.CommandText = """
         CREATE TABLE Korisnici (Ime TEXT, Email TEXT, Uloga TEXT);
         INSERT INTO Korisnici VALUES
-          ('Aid',     'aid@etf.unsa.ba',     'student'),
-          ('Amina',   'amina@etf.unsa.ba',   'student'),
-          ('Emina',   'emina@etf.unsa.ba',   'student'),
-          ('Sarah',   'sarah@etf.unsa.ba',   'student'),
+          ('Aid',     'aid@example.com',     'student'),
+          ('Amina',   'amina@example.com',   'student'),
+          ('Emina',   'emina@example.com',   'student'),
+          ('Sarah',   'sarah@example.com',   'student'),
           ('Dženana', 'ddonko@etf.unsa.ba',  'asistent'),
           ('Admin',   'admin@utic.net.ba',   'administrator');
-          ('Ramo Isak',   'ramo.isak@utic.net.ba',   'administrator');
         """;
     cmd.ExecuteNonQuery();
 }
